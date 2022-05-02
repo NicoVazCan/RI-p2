@@ -153,7 +153,7 @@ public class IndexMedline implements AutoCloseable {
                     break;
                 case "-indexingmodel":
                     switch (args[++i]) {
-                        case "jm lambda":
+                        case "jm":
                             model = new LMJelinekMercerSimilarity(Float.parseFloat(args[++i]));
                             break;
                         case "tfidf":
