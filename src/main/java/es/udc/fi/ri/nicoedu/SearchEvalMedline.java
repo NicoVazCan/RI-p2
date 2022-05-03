@@ -27,9 +27,7 @@ import java.util.stream.DoubleStream;
 
 public class SearchEvalMedline {
     private static final int FIRST_Q = 1, LAST_Q = 30;
-    private static final String FILE_Q = "/home/nico/Documentos/medQD/MED.QRY",
-            FIELD_C = "contents", DIR_OUT = "/home/nico/Documentos/medBD/",
-            FILE_R = "/home/nico/Documentos/medQD/MED.REL";
+    private static final String FIELD_C = "contents";
 
     private static Query[] parseQueries(QueryParser parser, Path file, int q1, int q2)
             throws IOException, ParseException {
@@ -58,7 +56,7 @@ public class SearchEvalMedline {
                     queryLine.setLength(0);
                 }
             } else {
-                queryLine.append(" ").append(parser.parse(line));
+                queryLine.append(" ").append(line);
             }
         }
         if (line.isEmpty()) {
@@ -86,7 +84,8 @@ public class SearchEvalMedline {
             }
             line = reader.readLine();
         }
-        for (int q = 0; q < nqueries && !line.isEmpty(); line = reader.readLine()) {
+        for (int q = 0; q < nqueries && line != null && !line.isEmpty();
+             line = reader.readLine()) {
             tuple = line.split(" ");
 
             if (Integer.parseInt(tuple[0]) > q1+q) {
@@ -100,14 +99,37 @@ public class SearchEvalMedline {
         return queriesRelDocs;
     }
 
+    private static void printText(String text, PrintStream txtoutput) {
+        System.out.println(text);
+        if (txtoutput != null) {
+            txtoutput.println(text);
+        }
+    }
+
+    private static void printRowCSV(String[] colVals, PrintStream csvoutput) {
+        if (csvoutput != null) {
+            StringBuilder row = new StringBuilder();
+            int s = 0;
+
+            for (; s < colVals.length-1; s++) {
+                row.append(colVals[s]).append(",");
+            }
+            row.append(colVals[s]);
+
+            csvoutput.println(row);
+        }
+    }
+
     public static void main(String[] args) {
         String usage = "java org.apache.lucene.demo.IndexFiles"
                 + " [-indexin INDEX_PATH] [-search jm Nº|tfidf]\n"
-                + " [-cut Nº] [-top Nº] [-queries all|Nº| Nº-Nº]\n\n";
+                + " [-cut Nº] [-top Nº] [-queries all|Nº| Nº-Nº]\n"
+                + " [-queriesfile FILE] [-reldocsfile FILE]\n"
+                + " [-outputdir PATH]\n\n";
         String indexPath = null;
         Similarity model = null;
         Integer n = null, m = null, q1 = null, q2 = null;
-        String fileName;
+        String fileName = null, outputDir = null, queriesFile = null, relDocsFile = null;
         float lambda = 0f;
 
         for (int i = 0; i < args.length; i++) {
@@ -150,50 +172,67 @@ public class SearchEvalMedline {
                         }
                     }
                     break;
+                case "-outputdir":
+                    outputDir = args[++i];
+                    break;
+                case "-queriesfile":
+                    queriesFile = args[++i];
+                    break;
+                case "-reldocsfile":
+                    relDocsFile = args[++i];
+                    break;
                 default:
                     throw new IllegalArgumentException("unknown parameter " + args[i]);
             }
         }
 
-        if (indexPath == null || n == null || m == null || q1 == null || q2 == null) {
+        if (indexPath == null || n == null || m == null || q1 == null ||
+                q2 == null || queriesFile == null || relDocsFile == null) {
             System.err.println("Usage: " + usage);
             System.exit(1);
         }
 
-
-        fileName = "medline." + (model instanceof ClassicSimilarity? "tfidf": "jm") + "." + n +
-                ".hits." + (model instanceof ClassicSimilarity? "": "lambda." + lambda) +
-                "." + (q1 == FIRST_Q && q2 == LAST_Q? "qall": "q1-" + q1 + (q1.equals(q2)? "" : ".q2-" + q2));
+        if (outputDir != null) {
+            fileName = "medline." + (model instanceof ClassicSimilarity ? "tfidf" : "jm") + "." + n +
+                    ".hits." + (model instanceof ClassicSimilarity ? "" : "lambda." + lambda) +
+                    "." + (q1 == FIRST_Q && q2 == LAST_Q ? "qall" : "q1-" + q1 + (q1.equals(q2) ? "" : ".q2-" + q2));
+        }
 
         try (Directory indexDir = FSDirectory.open(Path.of(indexPath));
              IndexReader indexReader = DirectoryReader.open(indexDir);
-             PrintStream txtoutput = new PrintStream(Files.newOutputStream(
-                     Path.of(DIR_OUT+fileName+".txt")));
-             PrintStream csvoutput = new PrintStream(Files.newOutputStream(
-                     Path.of(DIR_OUT+fileName+".csv")))) {
+             PrintStream txtoutput = outputDir != null? new PrintStream(Files.newOutputStream(
+                     Path.of(outputDir+fileName+".txt"))): null;
+             PrintStream csvoutput = outputDir != null? new PrintStream(Files.newOutputStream(
+                     Path.of(outputDir+fileName+".csv"))): null) {
 
             IndexSearcher indexSearcher = new IndexSearcher(indexReader);
             indexSearcher.setSimilarity(model);
             QueryParser parser = new QueryParser(FIELD_C, new StandardAnalyzer());
-            Query[] queries = parseQueries(parser, Path.of(FILE_Q), q1, q2);
+            Query[] queries = parseQueries(parser, Path.of(queriesFile), q1, q2);
             TopDocs topDocs;
-            double[] PAns = new double[n], RecallAns = new double[n], APAns = new double[n];
+            double[] PAns = new double[queries.length], RecallAns = new double[queries.length],
+                    APAns = new double[queries.length];
             int nRel = 0, APAn = 0, nqueriesRel = 0;
-            List<String>[] queriesRelDocs = parseRelDocs(Path.of(FILE_R), q1, q2);
+            List<String>[] queriesRelDocs = parseRelDocs(Path.of(relDocsFile), q1, q2);
+            double MPAn, MRecallAn, MAPAn;
+
+            printRowCSV(new String[] {"QueryID", "P@"+n, "Recall@"+n, "AP@"+n}, csvoutput);
 
             for (int q = 0; q < queries.length; q++) {
                 topDocs = indexSearcher.search(queries[q], n);
 
-                System.out.println("Query: " + (q+q1) + "\n"
-                        + queries[q].toString().replaceAll("contents:", "| ") + "\n");
+                printText("Query: " + (q+q1) + "\n"
+                        + queries[q].toString().replaceAll("contents:", "| ") + "\n",
+                        txtoutput);
 
-                for (int i = 0; i < n; i++) {
+                for (int i = 0; i < Math.min(n, topDocs.totalHits.value); i++) {
                     String da = indexReader.document(topDocs.scoreDocs[i].doc).get("docIDMedline");
 
                     if (i < m) {
-                        System.out.println("idLucene: " + topDocs.scoreDocs[i].doc + ", score: "
+                        printText("idLucene: " + topDocs.scoreDocs[i].doc + ", score: "
                                 + topDocs.scoreDocs[i].score + ", idMedline: "
-                                + indexReader.document(topDocs.scoreDocs[i].doc).get("docIDMedline"));
+                                + indexReader.document(topDocs.scoreDocs[i].doc).get("docIDMedline"),
+                                txtoutput);
                     }
                     if (queriesRelDocs[q].stream().anyMatch(da::equals)) {
                         nRel++;
@@ -203,19 +242,28 @@ public class SearchEvalMedline {
                 if (nRel > 0) {
                     nqueriesRel++;
                 }
-                System.out.println();
+                printText("", txtoutput);
 
                 PAns[q] = ((double) nRel)/n;
                 RecallAns[q] = ((double) nRel)/queriesRelDocs[q].size();
                 APAns[q] = ((double) APAn)/queriesRelDocs[q].size();
 
-                System.out.println("P@n: " + PAns[q] + ", Recall@ns: "
-                        + RecallAns[q] + ", AP@n: " + APAns[q] + "\n\n");
+                printText("P@n: " + PAns[q] + ", Recall@ns: "
+                        + RecallAns[q] + ", AP@n: " + APAns[q] + "\n\n", txtoutput);
+
+                printRowCSV(new String[] {String.valueOf(q+q1), String.valueOf(PAns[q]),
+                        String.valueOf(RecallAns[q]), String.valueOf(APAns[q])}, csvoutput);
             }
-            System.out.println("Nº de queries con resultados relevantes: " + nqueriesRel);
-            System.out.println("MP@n: " + DoubleStream.of(PAns).sum()/nqueriesRel
-                    + ", MRecall@ns: " + DoubleStream.of(RecallAns).sum()/nqueriesRel
-                    + ", MAP@n: " + DoubleStream.of(APAns).sum()/nqueriesRel);
+            printText("Nº de queries con resultados relevantes: " + nqueriesRel,
+                    txtoutput);
+            MPAn = DoubleStream.of(PAns).sum()/nqueriesRel;
+            MRecallAn = DoubleStream.of(RecallAns).sum()/nqueriesRel;
+            MAPAn = DoubleStream.of(APAns).sum()/nqueriesRel;
+            printText("MP@n: " + MPAn + ", MRecall@ns: " + MRecallAn
+                            + ", MAP@n: " + MAPAn + "\n", txtoutput);
+
+            printRowCSV(new String[] {q1+"-"+q2, String.valueOf(MPAn),
+                    String.valueOf(MRecallAn), String.valueOf(MAPAn)}, csvoutput);
         } catch (IOException | ParseException e) {
             e.printStackTrace();
             System.exit(1);
