@@ -333,7 +333,7 @@ public class IndexMedline implements AutoCloseable {
             // make a new, empty document
             Document doc = new Document();
 
-            doc.add(new LongPoint("docIDMedline", Long.parseLong(file.toFile().getName())));
+            doc.add(new StringField("docIDMedline", file.toFile().getName(), Field.Store.YES));
 
             BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
             doc.add(new TextField("contents", reader));
