@@ -29,7 +29,7 @@ public class TrainingTestMedline {
     private static List<Float> resultadosMetricaTest = new ArrayList<Float>();
 
     private static void processQuery(String queryString, String mrelString, int cut, String metrica,
-                                     boolean train, int currentQuery) throws IOException, ParseException, CorruptIndexException{
+                                     boolean train, int currentQuery) throws IOException, ParseException, CorruptIndexException, org.apache.lucene.queryparser.classic.ParseException {
         boolean relevant = false;
         QueryParser parser;
         parser = new QueryParser(FIELD, analyzer);
@@ -128,7 +128,7 @@ public class TrainingTestMedline {
         }catch (IOException e){
             System.err.println("Error: " + e);
             e.printStackTrace();
-        }catch (ParseException e){
+        }catch (ParseException | org.apache.lucene.queryparser.classic.ParseException e){
             e.printStackTrace();
         }finally {
             bufreadQuery.close();
