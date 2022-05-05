@@ -1,170 +1,40 @@
 package es.udc.fi.ri.nicoedu;
 
-import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.similarities.ClassicSimilarity;
 import org.apache.lucene.search.similarities.LMJelinekMercerSimilarity;
+import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 
 import java.io.*;
-import java.nio.file.Paths;
-import java.text.ParseException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.DoubleStream;
 
 public class TrainingTestMedline {
-    private final static String FIELD = "Contents";
 
-    private static IndexReader reader = null;
-    private static IndexSearcher searcher = null;
-    private static Analyzer analyzer = null;
-
-    //Lista para guardar resultados de cada query
-    private static List<Float> resultadosMetricaTrain = new ArrayList<Float>();
-    private static List<Float> resultadosMetricaTest = new ArrayList<Float>();
-
-    private static void processQuery(String queryString, String mrelString, int cut, String metrica,
-                                     boolean train, int currentQuery) throws IOException, ParseException, CorruptIndexException, org.apache.lucene.queryparser.classic.ParseException {
-        boolean relevant = false;
-        QueryParser parser;
-        parser = new QueryParser(FIELD, analyzer);
-        int[] array = new int[cut];
-        int t = 0;
-
-        List<String> relevantes = Arrays.asList(mrelString.trim().split("\\s+"));
-        Query query = parser.parse(queryString.toLowerCase()); //evitar AND
-
-        TopDocs topDocs = searcher.search(query, cut);
-
-        //Recorrer top de docs
-        for (int i = 0; i < Math.min(cut, topDocs.totalHits.value); i++){
-            relevant = relevantes.contains(reader.document(topDocs.scoreDocs[i].doc).get("DocIDMedline"));
-            array[i] = relevant ? 1 : 0;
-        }
-
-        float aux = 0;
-        if (metrica.equals("P")){
-            //suma los valores del array usando stream
-            t = Arrays.stream(array).sum();
-            aux = (float) t / cut;
-        }
-        else if (metrica.equals("R")) {
-            t = Arrays.stream(array).sum();
-            aux = (float) t / relevantes.size();
-        } else if (metrica.equals("MAP")) {
-            float sum2 = 0;
-            int sum = 0;
-            int cnt = 0;
-            for (int i = 0; i<cut; i++){
-                sum = 0;
-                if (array[i] == 1){
-                    cnt ++;
-                    //Calculo de media haciendo el cut
-                    for (int j = 0; j<=i; j++){
-                        sum += array[j];
-                    }
-                    sum2 += (float) sum / (i+1);
-                }
-            }
-            aux = (cnt == 0 ? (float) 0.0 : sum2 / cnt);
-        }
-        if (train)
-            resultadosMetricaTrain.add(aux);
-        else {
-            resultadosMetricaTest.add(aux);
-        }
-    }
-
-    public static void readQueries(int start, int end, String queryPath, String mrelPath, int cut, String metrica,
-                                   boolean train) throws IOException {
-        BufferedReader bufreadQuery = null;
-        BufferedReader bufreadMrel = null;
-        //Leer queries
-        String line = null;
-        boolean ini = true;
-        String queryString = null;
-        int currentQuery = 0;
-        //leer MED.REL
-        String mrelString = null;
-
-        try {
-            bufreadQuery = new BufferedReader(new FileReader(queryPath));
-            bufreadMrel = new BufferedReader(new FileReader(mrelPath));
-
-            while ((line = bufreadQuery.readLine()) != null){
-                if (line.equals("/")){
-                    if (!queryString.equals("")){
-                        processQuery(queryString, mrelString, cut, metrica, train, currentQuery);
-                        ini = true;
-                    }
-
-                } else if (ini) {
-                    currentQuery = Integer.parseInt(line);
-                    queryString = "";
-
-                    //MED.REL
-                    while ((line = bufreadMrel.readLine()) != null){
-                        if (line.equals("   /")){
-                            break;
-                        } else if (ini) {
-                            mrelString = "";
-                            ini = false;
-                        }else mrelString += line + "";
-                    }
-                    ini = false;
-
-                } else if ((end >= currentQuery) && (start <= currentQuery)) {
-                    queryString += line + "";
-                } else if (end < currentQuery) {
-                    break;
-                }
-            }
-            ini = true;
-        }catch (IOException e){
-            System.err.println("Error: " + e);
-            e.printStackTrace();
-        }catch (ParseException | org.apache.lucene.queryparser.classic.ParseException e){
-            e.printStackTrace();
-        }finally {
-            bufreadQuery.close();
-            bufreadMrel.close();
-        }
-
-    }
-
-    public static void main(String[] args) throws Exception{
+    public static void main(String[] args) {
         String usage = "Usage: TrainingTestMedline [-indexin pathname] [-evaljm int1-int2 int3-int4] [-cut n]" +
                 "[-metrica P | R | MAP]";
         if (args.length > 0 && ("-h".equals(args[0]) || "-help".equals(args[0]))){
             System.out.println(usage);
             System.exit(0);
         }
-        Properties properties = new Properties();
         String docsPath = null;
         String index = null;
         int cut = 5;
         String metrica = null;
-        String qTrain = null;
-        String qTest = null;
-        String output = null;
         boolean jm = false;
-        boolean train = true;
+        String queriesFile = null, relDocsFile = null, fileName = null;
+        Integer startTrain = null, endTrain = null, startTest = null, endTest = null;
 
-        try {
-            properties.load(new FileInputStream(new File("./src/main/resources/-config.properties")));
-            docsPath = properties.getProperty("docs");
-        }catch (FileNotFoundException e){
-            e.printStackTrace();
-            System.exit(1);
-        }catch (IOException e){
-            e.printStackTrace();
-            System.exit(1);
-        }
         for (int i = 0; i<args.length; i++){
             if ("-indexin".equals(args[i])){
                 index = args[i+1];
@@ -176,83 +46,212 @@ public class TrainingTestMedline {
                 cut = Integer.parseInt(args[i+1]);
                 i++;
             } else if ("-evaljm".equals(args[i])) {
-                qTrain = args[i+1];
-                qTest = args[i+2];
+                String[] qTrain = args[i+1].split("-"),
+                        qTest = args[i+2].split("-");
+
+                if (qTrain.length == 2 && qTest.length == 2){
+                    startTrain = Integer.parseInt(qTrain[0]);
+                    endTrain = Integer.parseInt(qTrain[1]);
+                    startTest = Integer.parseInt(qTest[0]);
+                    endTest = Integer.parseInt(qTest[1]);
+                } else {
+                    throw new IllegalArgumentException("unknown parameter " + args[i]);
+                }
                 i += 2;
                 jm = true;
             } else if ("-evaltfidf".equals(args[i])) {
-                qTrain = args[i + 1];
-                qTest = args[i + 2];
-                i += 2;
+                String[] qTest = args[i+1].split("-");
+
+                if (qTest.length == 2){
+                    startTrain = 0;
+                    endTrain = 0;
+                    startTest = Integer.parseInt(qTest[0]);
+                    endTest = Integer.parseInt(qTest[1]);
+                } else {
+                    throw new IllegalArgumentException("unknown parameter " + args[i]);
+                }
+                i++;
+            } else if ("-outputdir".equals(args[i])) {
+                docsPath = args[i+1];
+                i++;
+            } else if ("-queriesfile".equals(args[i])) {
+                queriesFile = args[i+1];
+                i++;
+            } else if ("-reldocsfile".equals(args[i])) {
+                relDocsFile = args[i+1];
+                i++;
             }
         }
-        if (index == null || metrica == null || (!metrica.equals("R") && !metrica.equals("P") && !metrica.equals("MAP"))){
+
+        if (index == null || metrica == null ||
+                (!metrica.equals("R") && !metrica.equals("P") && !metrica.equals("MAP")) ||
+                startTrain == null || endTrain == null || startTest == null || endTest == null ||
+                queriesFile == null || relDocsFile == null) {
             System.err.println("Usage: " + usage);
             System.exit(1);
         }
-        reader = DirectoryReader.open(FSDirectory.open(Paths.get(index)));
-        searcher = new IndexSearcher(reader);
-        analyzer = new StandardAnalyzer();
 
         System.out.println("Searching " + index + ", with: " + metrica + " metrica\n");
-        int startTrain = 0;
-        int endTrain = 0;
-        int startTest = 0;
-        int endTest = 0;
 
-        if (qTrain != null && qTest != null){
-            String[] limit = qTrain.split("-");
-            startTrain = Integer.parseInt(limit[0]);
-            endTrain = Integer.parseInt(limit[1]);
-
-            limit = qTest.split("-");
-            startTest = Integer.parseInt(limit[0]);
-            endTest = Integer.parseInt(limit[1]);
-        }else {
-            System.out.println(usage);
-            System.exit(0);
+        if (docsPath != null) {
+            fileName = "medline." + (jm? "jm": "tfidf") + ".training."
+                    + (jm? startTrain+"-"+endTrain: "null") + ".test."
+                    + startTest + "-" + endTest + "." +
+                    metrica.toLowerCase() + cut;
         }
 
-        String qPath = docsPath + "query-text";
-        String mrelPath = docsPath + "MED.REL";
+        try (Directory indexDir = FSDirectory.open(Path.of(index));
+             IndexReader reader = DirectoryReader.open(indexDir);
+             PrintStream trainOutput = docsPath != null? new PrintStream(Files.newOutputStream(
+                     Path.of(docsPath+fileName+".train.csv"))): null;
+             PrintStream testOutput = docsPath != null? new PrintStream(Files.newOutputStream(
+                     Path.of(docsPath+fileName+".test.csv"))): null) {
 
-        float meta = 0;
-        float bParam = 0;
-        float bMeta = 0;
-        float t = 0;
-        float[] lamda = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f };
-        float[] param = jm ? lamda:  ;
+            IndexSearcher searcher = new IndexSearcher(reader);
+            searcher.setSimilarity(new ClassicSimilarity());
+            QueryParser parser = new QueryParser(SearchEvalMedline.FIELD_C, new StandardAnalyzer());
 
-        for (float p: param) {
-            if (jm){
+            Query[] trainQueries = SearchEvalMedline.parseQueries(parser, Path.of(queriesFile), startTrain, endTrain);
+            Query[] testQueries = SearchEvalMedline.parseQueries(parser, Path.of(queriesFile), startTest, endTest);
+            List<String>[] trainQueriesRelDocs = SearchEvalMedline.parseRelDocs(Path.of(relDocsFile), startTrain, endTrain);
+            List<String>[] testQueriesRelDocs = SearchEvalMedline.parseRelDocs(Path.of(relDocsFile), startTest, endTest);
+            TopDocs topDocs;
+
+            int nRel = 0, APAn = 0, nqueriesRel = 0;
+            double medMet, maxMedMet = 0;
+            double[] mets = new double[trainQueries.length];
+            float lambda = 0f;
+            double[][] csvData = new double[9][trainQueries.length];
+            int l = 0;
+
+            System.out.println("TRAINING:\n");
+            if (trainOutput != null) {
+                trainOutput.print(metrica+"@"+cut);
+            }
+
+            for (float p = 0.1f; p <= 1; p+=0.1, l++) {
+                System.out.println("Queries con lambda = "+p+":");
                 searcher.setSimilarity(new LMJelinekMercerSimilarity(p));
-            }
-            resultadosMetricaTrain = new ArrayList<Float>();
-            readQueries(startTrain, endTrain, qPath, mrelPath, cut, metrica, train);
+                if (trainOutput != null) {
+                    trainOutput.print(',');
+                    trainOutput.print(p);
+                }
 
-            for (float f : resultadosMetricaTrain){
-                t += f;
-            }
-            meta = t / resultadosMetricaTrain.size();
-            System.out.println("Rango de queries: " + qTrain+ ", " + (jm ? "lamda" : "") + "=" + p + "meta = " +meta);
-            if (meta > bMeta){
-                bParam = p;
-                bMeta = meta;
-            }
-        }
-        System.out.println("\nMejor " + (jm?"lamda": "") + ": " + bParam+ ", con una meta de: "+bMeta);
-        if (jm){
-            searcher.setSimilarity(new LMJelinekMercerSimilarity(bParam));
-        }
-        train = false;
+                for (int q = 0; q < trainQueries.length; q++) {
+                    topDocs = searcher.search(trainQueries[q], cut);
 
-        readQueries(startTest, endTest, qPath, mrelPath, cut, metrica, train);
+                    System.out.println("Query: " + (q+startTrain) + "\n"
+                                    + trainQueries[q].toString().replaceAll("contents:", "| ") + "\n");
 
-        t = 0;
-        for (float f : resultadosMetricaTest){
-            t += f;
+                    for (int i = 0; i < Math.min(cut, topDocs.totalHits.value); i++) {
+                        String da = reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline");
+
+                        System.out.println("idLucene: " + topDocs.scoreDocs[i].doc + ", score: "
+                                        + topDocs.scoreDocs[i].score + ", idMedline: "
+                                        + reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline"));
+
+                        if (trainQueriesRelDocs[q].stream().anyMatch(da::equals)) {
+                            nRel++;
+                            APAn += nRel/(i+1);
+                        }
+                    }
+                    if (nRel > 0) {
+                        nqueriesRel++;
+                    }
+                    System.out.println();
+
+                    mets[q] = metrica.equals("P")? ((double) nRel)/cut:
+                        metrica.equals("R")? ((double) nRel)/trainQueriesRelDocs[q].size():
+                        metrica.equals("MAP")? ((double) APAn)/trainQueriesRelDocs[q].size() : 0;
+
+                    System.out.println(metrica+"@"+cut+": " + mets[q] + "\n\n");
+                    csvData[l][q] = mets[q];
+                }
+
+                medMet = DoubleStream.of(mets).sum()/nqueriesRel;
+
+                System.out.println("media de "+metrica+"@"+cut+": " + medMet + "\n\n\n");
+
+                if (maxMedMet < medMet) {
+                    maxMedMet = medMet;
+                    lambda = p;
+                }
+            }
+            if (trainOutput != null) {
+                trainOutput.println();
+            }
+
+            nRel = 0; APAn = 0; nqueriesRel = 0;
+            mets = new double[testQueries.length];
+            if (jm) {
+                System.out.println("\nMejor lamda: " + lambda+ ", con una meta de: "+maxMedMet);
+                searcher.setSimilarity(new LMJelinekMercerSimilarity(lambda));
+            }
+
+            for (int q = 0; q < trainQueries.length && trainOutput != null; q++) {
+                trainOutput.print(q+startTrain);
+                for (l = 0; l < 8; l++) {
+                    trainOutput.print(',');
+                    trainOutput.print(csvData[l][q]);
+                }
+                trainOutput.print(',');
+                trainOutput.print(csvData[l][q]);
+                trainOutput.println();
+            }
+
+            if (trainOutput != null) {
+                trainOutput.print("Media");
+                for (l = 0; l < 8; l++) {
+                    trainOutput.print(',');
+                    trainOutput.print(DoubleStream.of(csvData[l]).average().getAsDouble());
+                }
+                trainOutput.print(',');
+                trainOutput.print(DoubleStream.of(csvData[l]).average().getAsDouble());
+                trainOutput.println();
+            }
+
+            System.out.println("TESTING:\n");
+            testOutput.println(lambda+","+metrica+"@"+cut);
+
+            for (int q = 0; q < testQueries.length; q++) {
+                topDocs = searcher.search(testQueries[q], cut);
+
+                System.out.println("Query: " + (q+startTrain) + "\n"
+                        + testQueries[q].toString().replaceAll("contents:", "| ") + "\n");
+
+                for (int i = 0; i < Math.min(cut, topDocs.totalHits.value); i++) {
+                    String da = reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline");
+
+                    System.out.println("idLucene: " + topDocs.scoreDocs[i].doc + ", score: "
+                            + topDocs.scoreDocs[i].score + ", idMedline: "
+                            + reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline"));
+
+                    if (testQueriesRelDocs[q].stream().anyMatch(da::equals)) {
+                        nRel++;
+                        APAn += nRel/(i+1);
+                    }
+                }
+                if (nRel > 0) {
+                    nqueriesRel++;
+                }
+                System.out.println();
+
+                mets[q] = metrica.equals("P")? ((double) nRel)/cut:
+                        metrica.equals("R")? ((double) nRel)/testQueriesRelDocs[q].size():
+                                metrica.equals("MAP")? ((double) APAn)/testQueriesRelDocs[q].size() : 0;
+
+                System.out.println(metrica+"@"+cut+": " + mets[q] + "\n\n");
+                testOutput.println(q+startTest+","+mets[q]);
+            }
+
+            medMet = DoubleStream.of(mets).sum()/nqueriesRel;
+            System.out.println("M"+metrica+"@"+cut+": " + medMet + "\n\n\n");
+            testOutput.println("Media,"+medMet);
+
+
+        } catch (IOException | org.apache.lucene.queryparser.classic.ParseException e) {
+            e.printStackTrace();
+            System.exit(1);
         }
-        meta = t/resultadosMetricaTest.size();
-        System.out.println("Rango del query test: " + qTest+ ", meta = " + meta);
     }
 }

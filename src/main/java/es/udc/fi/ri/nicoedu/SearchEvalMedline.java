@@ -26,10 +26,10 @@ import java.util.List;
 import java.util.stream.DoubleStream;
 
 public class SearchEvalMedline {
-    private static final int FIRST_Q = 1, LAST_Q = 30;
-    private static final String FIELD_C = "contents";
+    public static final int FIRST_Q = 1, LAST_Q = 30;
+    public static final String FIELD_C = "contents";
 
-    private static Query[] parseQueries(QueryParser parser, Path file, int q1, int q2)
+    public static Query[] parseQueries(QueryParser parser, Path file, int q1, int q2)
             throws IOException, ParseException {
         int nqueries = q2-q1+1;
         Query[] queries = new Query[nqueries];
@@ -65,7 +65,7 @@ public class SearchEvalMedline {
         return queries;
     }
 
-    private static List<String>[] parseRelDocs(Path file, int q1, int q2) throws IOException {
+    public static List<String>[] parseRelDocs(Path file, int q1, int q2) throws IOException {
         int nqueries = q2-q1+1;
         List<String>[] queriesRelDocs = new ArrayList[nqueries];
         String[] tuple;
