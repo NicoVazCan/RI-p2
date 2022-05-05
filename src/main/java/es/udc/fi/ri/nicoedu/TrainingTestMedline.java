@@ -211,7 +211,9 @@ public class TrainingTestMedline {
             }
 
             System.out.println("TESTING:\n");
-            testOutput.println(lambda+","+metrica+"@"+cut);
+            if (testOutput != null) {
+                testOutput.println(lambda+","+metrica+"@"+cut);
+            }
 
             for (int q = 0; q < testQueries.length; q++) {
                 topDocs = searcher.search(testQueries[q], cut);
@@ -241,12 +243,17 @@ public class TrainingTestMedline {
                                 metrica.equals("MAP")? ((double) APAn)/testQueriesRelDocs[q].size() : 0;
 
                 System.out.println(metrica+"@"+cut+": " + mets[q] + "\n\n");
-                testOutput.println(q+startTest+","+mets[q]);
+
+                if (testOutput != null) {
+                    testOutput.println(q+startTest+","+mets[q]);
+                }
             }
 
             medMet = DoubleStream.of(mets).sum()/nqueriesRel;
             System.out.println("M"+metrica+"@"+cut+": " + medMet + "\n\n\n");
-            testOutput.println("Media,"+medMet);
+            if (testOutput != null) {
+                testOutput.println("Media,"+medMet);
+            }
 
 
         } catch (IOException | org.apache.lucene.queryparser.classic.ParseException e) {
