@@ -31,72 +31,76 @@ public class SearchEvalMedline {
 
     public static Query[] parseQueries(QueryParser parser, Path file, int q1, int q2)
             throws IOException, ParseException {
-        int nqueries = q2-q1+1;
-        Query[] queries = new Query[nqueries];
-        BufferedReader reader = new BufferedReader(
-                new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8));
-        String line = reader.readLine();
-        StringBuilder queryLine = new StringBuilder();
-        int q = 0;
 
-        while (!line.isEmpty() && !(line.startsWith(".I ") &&
-                Integer.parseInt(line.substring(3)) == q1)) {
-            line = reader.readLine();
-        }
-        reader.readLine();
-        line = reader.readLine();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8))) {
+            int nqueries = q2-q1+1;
+            Query[] queries = new Query[nqueries];
+            String line = reader.readLine();
+            StringBuilder queryLine = new StringBuilder();
+            int q = 0;
 
-        for (; q < nqueries && !line.isEmpty(); line = reader.readLine()) {
-            if (line.startsWith(".I ")) {
-                if(Integer.parseInt(line.substring(3)) != q1+q+1) {
-                    throw new ParseException();
-                } else {
-                    reader.readLine();
-                    queries[q++] = parser.parse(queryLine.toString());
-                    queryLine.setLength(0);
-                }
-            } else {
-                queryLine.append(" ").append(line);
+            while (line != null && !line.isEmpty() && !(line.startsWith(".I ") &&
+                    Integer.parseInt(line.substring(3)) >= q1)) {
+                line = reader.readLine();
             }
+            reader.readLine();
+            line = reader.readLine();
+
+            for (; q < nqueries && line != null && !line.isEmpty(); line = reader.readLine()) {
+                if (line.startsWith(".I ")) {
+                    if (Integer.parseInt(line.substring(3)) != q1 + q + 1) {
+                        return queries;
+                    } else {
+                        reader.readLine();
+                        queries[q++] = parser.parse(queryLine.toString());
+                        queryLine.setLength(0);
+                    }
+                } else {
+                    queryLine.append(" ").append(line);
+                }
+            }
+            if (line == null || line.isEmpty()) {
+                queries[q] = parser.parse(queryLine.toString());
+            }
+            return queries;
         }
-        if (line.isEmpty()) {
-            queries[q] = parser.parse(queryLine.toString());
-        }
-        return queries;
     }
 
     public static List<String>[] parseRelDocs(Path file, int q1, int q2) throws IOException {
-        int nqueries = q2-q1+1;
-        List<String>[] queriesRelDocs = new ArrayList[nqueries];
-        String[] tuple;
-        BufferedReader reader = new BufferedReader(
-                new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8));
-        String line = reader.readLine();
 
-        for (int q = 0; q < nqueries; q++) {
-            queriesRelDocs[q] = new ArrayList<>();
-        }
-        while (!line.isEmpty()) {
-            tuple = line.split(" ");
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8))) {
+            int nqueries = q2-q1+1;
+            List<String>[] queriesRelDocs = new ArrayList[nqueries];
+            String[] tuple;
+            String line = reader.readLine();
 
-            if(Integer.parseInt(tuple[0]) == q1) {
-                break;
+            for (int q = 0; q < nqueries; q++) {
+                queriesRelDocs[q] = new ArrayList<>();
             }
-            line = reader.readLine();
-        }
-        for (int q = 0; q < nqueries && line != null && !line.isEmpty();
-             line = reader.readLine()) {
-            tuple = line.split(" ");
+            while (!line.isEmpty()) {
+                tuple = line.split(" ");
 
-            if (Integer.parseInt(tuple[0]) > q1+q) {
-                q++;
+                if (Integer.parseInt(tuple[0]) >= q1) {
+                    break;
+                }
+                line = reader.readLine();
             }
-            if (q < nqueries) {
-                queriesRelDocs[q].add(tuple[2]);
-            }
-        }
+            for (int q = 0; q < nqueries && line != null && !line.isEmpty();
+                 line = reader.readLine()) {
+                tuple = line.split(" ");
 
-        return queriesRelDocs;
+                if (Integer.parseInt(tuple[0]) > q1 + q) {
+                    q++;
+                }
+                if (q < nqueries) {
+                    queriesRelDocs[q].add(tuple[2]);
+                }
+            }
+
+            return queriesRelDocs;
+        }
     }
 
     private static void printText(String text, PrintStream txtoutput) {

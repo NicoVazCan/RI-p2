@@ -15,7 +15,7 @@ public class Compare {
 
         try (BufferedReader bfRead = new BufferedReader(new FileReader(result))){
             muestra = new ArrayList<Double>();
-            String linea = null;
+            String linea = bfRead.readLine();
 
             while ((linea = bfRead.readLine()) != null){
                 muestra.add(Double.parseDouble(linea.split(",")[1]));
@@ -24,9 +24,9 @@ public class Compare {
             System.out.println("Error");
             e.printStackTrace();
         }
-        double[] array = new double[muestra.size()];
+        double[] array = new double[muestra.size()-1];
 
-        for (int i = 0; i < muestra.size(); i++){
+        for (int i = 0; i < muestra.size()-1; i++){
             array[i] = muestra.get(i).doubleValue();
         }
         return array;
@@ -69,6 +69,6 @@ public class Compare {
 
         System.out.println("p-valor: " +p);
         System.out.println("alpha: " + alpha);
-        System.out.println("\nThe result "+(p<alpha? "has" : "hasn't") + "statistical significate");
+        System.out.println("\nThe result "+(p<alpha? "has" : "hasn't") + " statistical significate");
     }
 }

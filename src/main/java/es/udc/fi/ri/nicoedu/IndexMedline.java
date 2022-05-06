@@ -15,11 +15,9 @@ import org.apache.lucene.util.IOUtils;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -50,17 +48,16 @@ public class IndexMedline implements AutoCloseable {
     public static class WorkerThread implements Runnable {
         private final IndexWriter writer;
         private final IndexMedline indexMedline;
-        private final Path folder;
-        private final int maxDepth;
+        private final String docIDMedline, docContent;
 
         public WorkerThread(final IndexWriter writer,
-                            final IndexMedline indexFiles,
-                            final Path folder,
-                            final int maxDepth) {
+                            final IndexMedline indexMedline,
+                            final String docIDMedline,
+                            final String docContent) {
             this.writer = writer;
-            this.indexMedline = indexFiles;
-            this.folder = folder;
-            this.maxDepth = maxDepth;
+            this.indexMedline = indexMedline;
+            this.docIDMedline = docIDMedline;
+            this.docContent = docContent;
         }
 
         /**
@@ -70,13 +67,13 @@ public class IndexMedline implements AutoCloseable {
         @Override
         public void run() {
             try {
-                indexMedline.indexDocs(writer, folder, maxDepth);
+                indexMedline.indexDoc(writer, docIDMedline, docContent);
             } catch (final IOException e) {
                 e.printStackTrace();
                 System.exit(-1);
             }
-            System.out.println(String.format("I am the thread '%s' and I am responsible for folder '%s'",
-                    Thread.currentThread().getName(), folder));
+            System.out.println(String.format("I am the thread '%s' and I am responsible for doc with IDMedline '%s'",
+                    Thread.currentThread().getName(), docIDMedline));
         }
     }
 
@@ -207,40 +204,38 @@ public class IndexMedline implements AutoCloseable {
 
             final ExecutorService executor = Executors.newFixedThreadPool(numThreads);
             final List<IndexWriter> subwriters = new ArrayList<>();
-            IndexWriter subwriter;
 
             try (IndexWriter writer = new IndexWriter(dir, iwc);
                  IndexMedline indexMedline = new IndexMedline(vectorDictInstance);
-                 DirectoryStream<Path> directoryStream = Files.newDirectoryStream(docDir)) {
+                 BufferedReader reader = new BufferedReader(new InputStreamReader(
+                         Files.newInputStream(Path.of(docsPath)), StandardCharsets.UTF_8))) {
 
-                for (final Path path : directoryStream) {
-                    if (Files.isDirectory(path)) {
-                        if(partialIndexes) {
-                            Path subIndexDir = Path.of(indexDir.getParent().toString() + "/" +
-                                    path.toFile().getName());
+                String line = reader.readLine();
+                String docIDMedline = null;
+                StringBuilder docContent = new StringBuilder();
 
-                            if(!Files.exists(subIndexDir)) {
-                                if(openMode == IndexWriterConfig.OpenMode.CREATE ||
-                                        openMode == IndexWriterConfig.OpenMode.CREATE_OR_APPEND) {
-                                    Files.createDirectory(subIndexDir);
-                                } else {
-                                    throw new IOException();
-                                }
-                            }
-                            Directory subdir = FSDirectory.open(subIndexDir);
+                while (line != null) {
+                    if (line.startsWith(".I ")) {
+                        reader.readLine();
 
-                            subwriter = new IndexWriter(subdir,
-                                    new IndexWriterConfig(analyzer)
-                                            .setOpenMode(openMode)
-                                            .setSimilarity(model));
-                            subwriters.add(subwriter);
-                        } else {
-                            subwriter = writer;
+                        if (docIDMedline != null) {
+                            indexDoc(openMode, partialIndexes, model,
+                                    indexDir, analyzer, executor,
+                                    subwriters, writer, indexMedline,
+                                    line, docIDMedline, docContent);
                         }
-
-                        executor.execute(new WorkerThread(subwriter, indexMedline, path, maxDepth));
+                        docIDMedline = line.substring(3);
+                        docContent.setLength(0);
+                    } else {
+                        docContent.append(" ").append(line);
                     }
+                    line = reader.readLine();
                 }
+
+                indexDoc(openMode, partialIndexes, model,
+                        indexDir, analyzer, executor,
+                        subwriters, writer, indexMedline,
+                        line, docIDMedline, docContent);
 
                 executor.shutdown();
                 executor.awaitTermination(1, TimeUnit.HOURS);
@@ -282,81 +277,68 @@ public class IndexMedline implements AutoCloseable {
         }
     }
 
-    /**
-     * Indexes the given file using the given writer, or if a directory is given,
-     * recurses over files and directories found under the given directory.
-     *
-     * <p>
-     * NOTE: This method indexes one document per input file. This is slow. For good
-     * throughput, put multiple documents into your input file(s). An example of
-     * this is in the benchmark module, which can create "line doc" files, one
-     * document per line, using the <a href=
-     * "../../../../../contrib-benchmark/org/apache/lucene/benchmark/byTask/tasks/WriteLineDocTask.html"
-     * >WriteLineDocTask</a>.
-     *
-     * @param writer Writer to the index where the given file/dir info will be
-     *               stored
-     * @param path   The file to index, or the directory to recurse into to find
-     *               files to indt
-     * @throws IOException If there is a low-level I/O error
-     */
-    void indexDocs(final IndexWriter writer, Path path, int maxDepth) throws IOException {
-        String aux = this.fileProp.getProperty("onlyFiles");
-        String[] onlyFiles = aux == null? null: aux.split(" ");
+    private static void indexDoc(IndexWriterConfig.OpenMode openMode,
+                                 boolean partialIndexes, Similarity model,
+                                 Path indexDir, Analyzer analyzer,
+                                 ExecutorService executor,
+                                 List<IndexWriter> subwriters,
+                                 IndexWriter writer, IndexMedline indexMedline,
+                                 String line, String docIDMedline,
+                                 StringBuilder docContent) throws IOException {
+        IndexWriter subwriter;
+        if(partialIndexes) {
+            Path subIndexDir = Path.of(indexDir.getParent().toString()
+                    + "/" +line.substring(3));
 
-        if (Files.isDirectory(path)) {
-            Files.walkFileTree(path, EnumSet.of(FileVisitOption.FOLLOW_LINKS), maxDepth,
-                    new SimpleFileVisitor<Path>() {
-                        @Override
-                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                            try {
-                                if(onlyFiles == null ||
-                                        Arrays.stream(onlyFiles).anyMatch((ext) -> file.toString().endsWith(ext))) {
-                                    indexDoc(writer, file, attrs.lastModifiedTime().toMillis());
-                                }
-                            } catch (@SuppressWarnings("unused") IOException ignore) {
-                                ignore.printStackTrace(System.err);
-                                // don't index files that can't be read.
-                            }
-                            return FileVisitResult.CONTINUE;
-                        }
-                    });
-        } else {
-            indexDoc(writer, path, Files.getLastModifiedTime(path).toMillis());
-        }
-    }
-
-    /** Indexes a single document */
-    void indexDoc(IndexWriter writer, Path file, long lastModified) throws IOException {
-        try (InputStream stream = Files.newInputStream(file)) {
-
-            // make a new, empty document
-            Document doc = new Document();
-
-            doc.add(new StringField("docIDMedline", file.toFile().getName(), Field.Store.YES));
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
-            doc.add(new TextField("contents", reader));
-
-            if (demoEmbeddings != null) {
-                try (InputStream in = Files.newInputStream(file)) {
-                    float[] vector = demoEmbeddings
-                            .computeEmbedding(new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8)));
-                    doc.add(new KnnVectorField("contents-vector", vector, VectorSimilarityFunction.DOT_PRODUCT));
+            if(!Files.exists(subIndexDir)) {
+                if(openMode == IndexWriterConfig.OpenMode.CREATE ||
+                        openMode == IndexWriterConfig.OpenMode.CREATE_OR_APPEND) {
+                    Files.createDirectory(subIndexDir);
+                } else {
+                    throw new IOException();
                 }
             }
+            Directory subdir = FSDirectory.open(subIndexDir);
 
-            if (writer.getConfig().getOpenMode() == IndexWriterConfig.OpenMode.CREATE) {
-                // New index, so we just add the document (no old document can be there):
-                System.out.println("adding " + file);
-                writer.addDocument(doc);
-            } else {
-                // Existing index (an old copy of this document may have been indexed) so
-                // we use updateDocument instead to replace the old one matching the exact
-                // path, if present:
-                System.out.println("updating " + file);
-                writer.updateDocument(new Term("path", file.toString()), doc);
-            }
+            subwriter = new IndexWriter(subdir,
+                    new IndexWriterConfig(analyzer)
+                            .setOpenMode(openMode)
+                            .setSimilarity(model));
+            subwriters.add(subwriter);
+        } else {
+            subwriter = writer;
+        }
+
+        executor.execute(new WorkerThread(subwriter, indexMedline,
+                docIDMedline, docContent.toString()));
+    }
+
+
+    /** Indexes a single document */
+    void indexDoc(IndexWriter writer, String docIDMedline, String docContent) throws IOException {
+        // make a new, empty document
+        Document doc = new Document();
+
+        doc.add(new StringField("docIDMedline", docIDMedline, Field.Store.YES));
+
+        doc.add(new TextField("contents", docContent, Field.Store.YES));
+
+        if (demoEmbeddings != null) {
+            float[] vector = demoEmbeddings
+                    .computeEmbedding(docContent);
+            doc.add(new KnnVectorField("contents-vector", vector, VectorSimilarityFunction.DOT_PRODUCT));
+        }
+
+        if (writer.getConfig().getOpenMode() == IndexWriterConfig.OpenMode.CREATE) {
+            // New index, so we just add the document (no old document can be there):
+            System.out.println("adding doc with IDMedline " + docIDMedline);
+            writer.addDocument(doc);
+        } else {
+            // Existing index (an old copy of this document may have been indexed) so
+            // we use updateDocument instead to replace the old one matching the exact
+            // path, if present:
+            System.out.println("updating doc with IDMedline " + docIDMedline);
+            writer.updateDocument(new Term("docIDMedline", docIDMedline), doc);
         }
     }
 

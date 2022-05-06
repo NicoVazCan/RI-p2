@@ -102,7 +102,7 @@ public class TrainingTestMedline {
 
         try (Directory indexDir = FSDirectory.open(Path.of(index));
              IndexReader reader = DirectoryReader.open(indexDir);
-             PrintStream trainOutput = docsPath != null? new PrintStream(Files.newOutputStream(
+             PrintStream trainOutput = docsPath != null && jm? new PrintStream(Files.newOutputStream(
                      Path.of(docsPath+fileName+".train.csv"))): null;
              PrintStream testOutput = docsPath != null? new PrintStream(Files.newOutputStream(
                      Path.of(docsPath+fileName+".test.csv"))): null) {
@@ -119,100 +119,103 @@ public class TrainingTestMedline {
 
             int nRel = 0, APAn = 0, nqueriesRel = 0;
             double medMet, maxMedMet = 0;
-            double[] mets = new double[trainQueries.length];
+            double[] mets;
             float lambda = 0f;
-            double[][] csvData = new double[9][trainQueries.length];
-            int l = 0;
 
-            System.out.println("TRAINING:\n");
-            if (trainOutput != null) {
-                trainOutput.print(metrica+"@"+cut);
-            }
-
-            for (float p = 0.1f; p <= 1; p+=0.1, l++) {
-                System.out.println("Queries con lambda = "+p+":");
-                searcher.setSimilarity(new LMJelinekMercerSimilarity(p));
-                if (trainOutput != null) {
-                    trainOutput.print(',');
-                    trainOutput.print(p);
-                }
-
-                for (int q = 0; q < trainQueries.length; q++) {
-                    topDocs = searcher.search(trainQueries[q], cut);
-
-                    System.out.println("Query: " + (q+startTrain) + "\n"
-                                    + trainQueries[q].toString().replaceAll("contents:", "| ") + "\n");
-
-                    for (int i = 0; i < Math.min(cut, topDocs.totalHits.value); i++) {
-                        String da = reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline");
-
-                        System.out.println("idLucene: " + topDocs.scoreDocs[i].doc + ", score: "
-                                        + topDocs.scoreDocs[i].score + ", idMedline: "
-                                        + reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline"));
-
-                        if (trainQueriesRelDocs[q].stream().anyMatch(da::equals)) {
-                            nRel++;
-                            APAn += nRel/(i+1);
-                        }
-                    }
-                    if (nRel > 0) {
-                        nqueriesRel++;
-                    }
-                    System.out.println();
-
-                    mets[q] = metrica.equals("P")? ((double) nRel)/cut:
-                        metrica.equals("R")? ((double) nRel)/trainQueriesRelDocs[q].size():
-                        metrica.equals("MAP")? ((double) APAn)/trainQueriesRelDocs[q].size() : 0;
-
-                    System.out.println(metrica+"@"+cut+": " + mets[q] + "\n\n");
-                    csvData[l][q] = mets[q];
-                }
-
-                medMet = DoubleStream.of(mets).sum()/nqueriesRel;
-
-                System.out.println("media de "+metrica+"@"+cut+": " + medMet + "\n\n\n");
-
-                if (maxMedMet < medMet) {
-                    maxMedMet = medMet;
-                    lambda = p;
-                }
-            }
-            if (trainOutput != null) {
-                trainOutput.println();
-            }
-
-            nRel = 0; APAn = 0; nqueriesRel = 0;
-            mets = new double[testQueries.length];
             if (jm) {
-                System.out.println("\nMejor lamda: " + lambda+ ", con una meta de: "+maxMedMet);
-                searcher.setSimilarity(new LMJelinekMercerSimilarity(lambda));
-            }
+                mets = new double[trainQueries.length];
+                double[][] csvData = new double[9][trainQueries.length];
+                int l = 0;
 
-            for (int q = 0; q < trainQueries.length && trainOutput != null; q++) {
-                trainOutput.print(q+startTrain);
-                for (l = 0; l < 8; l++) {
-                    trainOutput.print(',');
-                    trainOutput.print(csvData[l][q]);
+                System.out.println("TRAINING:\n");
+                if (trainOutput != null) {
+                    trainOutput.print(metrica + "@" + cut);
                 }
-                trainOutput.print(',');
-                trainOutput.print(csvData[l][q]);
-                trainOutput.println();
-            }
 
-            if (trainOutput != null) {
-                trainOutput.print("Media");
-                for (l = 0; l < 8; l++) {
+                for (float p = 0.1f; p <= 1; p += 0.1, l++) {
+                    System.out.println("Queries con lambda = " + p + ":");
+                    searcher.setSimilarity(new LMJelinekMercerSimilarity(p));
+                    if (trainOutput != null) {
+                        trainOutput.print(',');
+                        trainOutput.print(p);
+                    }
+
+                    for (int q = 0; q < trainQueries.length; q++) {
+                        topDocs = searcher.search(trainQueries[q], cut);
+
+                        System.out.println("Query: " + (q + startTrain) + "\n"
+                                + trainQueries[q].toString().replaceAll("contents:", "| ") + "\n");
+
+                        for (int i = 0; i < Math.min(cut, topDocs.totalHits.value); i++) {
+                            String da = reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline");
+
+                            System.out.println("idLucene: " + topDocs.scoreDocs[i].doc + ", score: "
+                                    + topDocs.scoreDocs[i].score + ", idMedline: "
+                                    + reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline"));
+
+                            if (trainQueriesRelDocs[q].stream().anyMatch(da::equals)) {
+                                nRel++;
+                                APAn += nRel / (i + 1);
+                            }
+                        }
+                        if (nRel > 0) {
+                            nqueriesRel++;
+                        }
+                        System.out.println();
+
+                        mets[q] = metrica.equals("P") ? ((double) nRel) / cut :
+                                metrica.equals("R") ? ((double) nRel) / trainQueriesRelDocs[q].size() :
+                                        metrica.equals("MAP") ? ((double) APAn) / trainQueriesRelDocs[q].size() : 0;
+
+                        System.out.println(metrica + "@" + cut + ": " + mets[q] + "\n\n");
+                        csvData[l][q] = mets[q];
+                    }
+
+                    medMet = DoubleStream.of(mets).sum() / nqueriesRel;
+
+                    System.out.println("media de " + metrica + "@" + cut + ": " + medMet + "\n\n\n");
+
+                    if (maxMedMet < medMet) {
+                        maxMedMet = medMet;
+                        lambda = p;
+                    }
+                }
+
+                System.out.println("\nMejor lamda: " + lambda + ", con una meta de: " + maxMedMet);
+                searcher.setSimilarity(new LMJelinekMercerSimilarity(lambda));
+
+                if (trainOutput != null) {
+                    trainOutput.println();
+
+                    for (int q = 0; q < trainQueries.length; q++) {
+                        trainOutput.print(q+startTrain);
+                        for (l = 0; l < 8; l++) {
+                            trainOutput.print(',');
+                            trainOutput.print(csvData[l][q]);
+                        }
+                        trainOutput.print(',');
+                        trainOutput.print(csvData[l][q]);
+                        trainOutput.println();
+                    }
+                    trainOutput.print("Media");
+                    for (l = 0; l < 8; l++) {
+                        trainOutput.print(',');
+                        trainOutput.print(DoubleStream.of(csvData[l]).average().getAsDouble());
+                    }
                     trainOutput.print(',');
                     trainOutput.print(DoubleStream.of(csvData[l]).average().getAsDouble());
+                    trainOutput.println();
                 }
-                trainOutput.print(',');
-                trainOutput.print(DoubleStream.of(csvData[l]).average().getAsDouble());
-                trainOutput.println();
             }
+
+            nRel = 0;
+            APAn = 0;
+            nqueriesRel = 0;
+            mets = new double[testQueries.length];
 
             System.out.println("TESTING:\n");
             if (testOutput != null) {
-                testOutput.println(lambda+","+metrica+"@"+cut);
+                testOutput.println((jm? lambda: "Query")+","+metrica+"@"+cut);
             }
 
             for (int q = 0; q < testQueries.length; q++) {
