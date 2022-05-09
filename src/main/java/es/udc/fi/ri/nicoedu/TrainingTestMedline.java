@@ -117,10 +117,11 @@ public class TrainingTestMedline {
             List<String>[] testQueriesRelDocs = SearchEvalMedline.parseRelDocs(Path.of(relDocsFile), startTest, endTest);
             TopDocs topDocs;
 
-            int nRel = 0, APAn = 0, nqueriesRel = 0;
+            int nRel = 0, nqueriesRel = 0;
             double medMet, maxMedMet = 0;
             double[] mets;
             float lambda = 0f;
+            double APAn = 0;
 
             if (jm) {
                 mets = new double[trainQueries.length];
@@ -146,6 +147,9 @@ public class TrainingTestMedline {
                         System.out.println("Query: " + (q + startTrain) + "\n"
                                 + trainQueries[q].toString().replaceAll("contents:", "| ") + "\n");
 
+                        nRel = 0;
+                        APAn = 0;
+
                         for (int i = 0; i < Math.min(cut, topDocs.totalHits.value); i++) {
                             String da = reader.document(topDocs.scoreDocs[i].doc).get("docIDMedline");
 
@@ -155,7 +159,7 @@ public class TrainingTestMedline {
 
                             if (trainQueriesRelDocs[q].stream().anyMatch(da::equals)) {
                                 nRel++;
-                                APAn += nRel / (i + 1);
+                                APAn += ((double) nRel) / (i + 1);
                             }
                         }
                         if (nRel > 0) {
@@ -208,8 +212,6 @@ public class TrainingTestMedline {
                 }
             }
 
-            nRel = 0;
-            APAn = 0;
             nqueriesRel = 0;
             mets = new double[testQueries.length];
 
@@ -220,6 +222,8 @@ public class TrainingTestMedline {
 
             for (int q = 0; q < testQueries.length; q++) {
                 topDocs = searcher.search(testQueries[q], cut);
+                nRel=0;
+                APAn = 0;
 
                 System.out.println("Query: " + (q+startTrain) + "\n"
                         + testQueries[q].toString().replaceAll("contents:", "| ") + "\n");
@@ -233,7 +237,7 @@ public class TrainingTestMedline {
 
                     if (testQueriesRelDocs[q].stream().anyMatch(da::equals)) {
                         nRel++;
-                        APAn += nRel/(i+1);
+                        APAn += ((double) nRel)/(i+1);
                     }
                 }
                 if (nRel > 0) {

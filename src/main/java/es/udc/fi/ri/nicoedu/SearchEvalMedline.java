@@ -216,9 +216,9 @@ public class SearchEvalMedline {
             TopDocs topDocs;
             double[] PAns = new double[queries.length], RecallAns = new double[queries.length],
                     APAns = new double[queries.length];
-            int nRel = 0, APAn = 0, nqueriesRel = 0;
+            int nRel = 0, nqueriesRel = 0;
             List<String>[] queriesRelDocs = parseRelDocs(Path.of(relDocsFile), q1, q2);
-            double MPAn, MRecallAn, MAPAn;
+            double MPAn, MRecallAn, MAPAn, APAn = 0;
 
             printRowCSV(new String[] {"QueryID", "P@"+n, "Recall@"+n, "AP@"+n}, csvoutput);
 
@@ -228,6 +228,8 @@ public class SearchEvalMedline {
                 printText("Query: " + (q+q1) + "\n"
                         + queries[q].toString().replaceAll("contents:", "| ") + "\n",
                         txtoutput);
+                nRel = 0;
+                APAn = 0;
 
                 for (int i = 0; i < Math.min(n, topDocs.totalHits.value); i++) {
                     String da = indexReader.document(topDocs.scoreDocs[i].doc).get("docIDMedline");
@@ -240,7 +242,7 @@ public class SearchEvalMedline {
                     }
                     if (queriesRelDocs[q].stream().anyMatch(da::equals)) {
                         nRel++;
-                        APAn += nRel/(i+1);
+                        APAn += ((double) nRel)/(i+1);
                     }
                 }
                 if (nRel > 0) {
